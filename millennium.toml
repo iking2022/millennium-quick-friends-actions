@@ -1,0 +1,19 @@
+[plugin]
+id = "com.steambrew.quick_friends_actions"
+name = "Quick Friends Actions"
+version = "1.0.0"
+author = "apple sauce & made by Qusa"
+description = "Adds Quick 'Message' and 'Remove Friend' action buttons to the Steam Friends page."
+
+[backend]
+entry = "backend/main.lua"
+sources = ["backend/**/*.lua"]
+
+[frontend]
+entry = "dist/index.js"
+
+[webkit]
+entry = "dist/webkit.js"
+
+[compiler]
+output_path = "auto"

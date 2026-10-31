@@ -1,0 +1,10 @@
+{
+    "$schema": "https://raw.githubusercontent.com/SteamClientHomebrew/Millennium/main/src/sys/plugin-schema.json",
+    "name": "quick_friends_actions",
+    "common_name": "Quick Friends Actions",
+    "description": "Adds 'Message' and 'Remove Friend' action buttons directly on the Steam Community Friends list.",
+    "version": "1.0.0",
+    "author": "apple sauce & made by Qusa",
+    "include": ["README.md", "dist"],
+    "backendType": "lua"
+}
