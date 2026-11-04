@@ -8,13 +8,14 @@ InitializePlugins();
 const __call_server_method__ = (n, A) => Millennium.callServerMethod(pluginName, n, A);
 
 const STYLES = `
-/* Quick Friends Actions Styles */
+/* Quick Friends Actions - Compact Icon-Only Buttons */
 .friend_block_v2 {
     position: relative !important;
 }
 
-.friend_block_v2 .friend_block_content {
-    padding-right: 155px !important;
+/* Only friend cards that have action buttons get right padding */
+.friend_block_v2.has_quick_actions .friend_block_content {
+    padding-right: 72px !important;
 }
 
 .friend_quick_actions {
@@ -24,7 +25,7 @@ const STYLES = `
     transform: translateY(-50%);
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 5px;
     z-index: 99 !important;
     pointer-events: auto !important;
 }
@@ -33,16 +34,12 @@ const STYLES = `
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: 5px;
+    width: 26px;
     height: 26px;
-    padding: 0 9px;
-    border-radius: 3px;
-    font-size: 11px;
-    font-weight: 600;
-    font-family: "Motiva Sans", Arial, Helvetica, sans-serif;
+    padding: 0;
+    border-radius: 4px;
     cursor: pointer;
     text-decoration: none !important;
-    white-space: nowrap;
     transition: all 0.15s ease-in-out;
     user-select: none;
     box-sizing: border-box;
@@ -50,13 +47,13 @@ const STYLES = `
 }
 
 .friend_quick_btn svg {
-    width: 13px;
-    height: 13px;
+    width: 14px;
+    height: 14px;
     flex-shrink: 0;
     fill: currentColor;
 }
 
-/* Chat Button (Steam Blue) */
+/* Chat Icon Button (Steam Blue) */
 .friend_quick_btn_chat {
     background: rgba(102, 192, 244, 0.15);
     border: 1px solid rgba(102, 192, 244, 0.4);
@@ -67,7 +64,7 @@ const STYLES = `
     background: rgba(102, 192, 244, 0.35);
     border-color: #66c0f4;
     color: #ffffff !important;
-    box-shadow: 0 0 8px rgba(102, 192, 244, 0.4);
+    box-shadow: 0 0 8px rgba(102, 192, 244, 0.45);
     transform: translateY(-1px);
 }
 
@@ -75,7 +72,7 @@ const STYLES = `
     transform: translateY(0);
 }
 
-/* Remove Friend Button (Crimson) */
+/* Remove Friend Icon Button (Crimson) */
 .friend_quick_btn_remove {
     background: rgba(235, 75, 75, 0.12);
     border: 1px solid rgba(235, 75, 75, 0.35);
@@ -86,7 +83,7 @@ const STYLES = `
     background: rgba(235, 75, 75, 0.35);
     border-color: #ff4747;
     color: #ffffff !important;
-    box-shadow: 0 0 8px rgba(235, 75, 75, 0.4);
+    box-shadow: 0 0 8px rgba(235, 75, 75, 0.45);
     transform: translateY(-1px);
 }
 
@@ -235,6 +232,36 @@ const STYLES = `
 }
 `;
 
+const STORAGE_KEY = "steam_quick_friends_my_ids_v1";
+let myFriendsSet = new Set();
+let backgroundFetchDone = false;
+
+function loadSavedFriends() {
+    try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (raw) {
+            const arr = JSON.parse(raw);
+            if (Array.isArray(arr)) {
+                arr.forEach(id => {
+                    if (id && typeof id === "string") {
+                        myFriendsSet.add(id);
+                    }
+                });
+            }
+        }
+    } catch (e) {
+        console.warn("[Quick Friends] Failed to parse friends cache:", e);
+    }
+}
+
+function saveFriendsCache() {
+    try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(Array.from(myFriendsSet)));
+    } catch (e) {
+        console.warn("[Quick Friends] Failed to save friends cache:", e);
+    }
+}
+
 function injectStyles() {
     let el = document.getElementById("steam-quick-friends-css");
     if (!el) {
@@ -260,12 +287,109 @@ function getSessionID() {
     return null;
 }
 
+function getLoggedInSteamID() {
+    if (window.g_steamID) {
+        return String(window.g_steamID);
+    }
+    const match = document.cookie.match(/steamLoginSecure=(\d{17})/);
+    if (match) {
+        return match[1];
+    }
+    return null;
+}
+
+function getPageProfileSteamID() {
+    if (window.g_rgProfileData && window.g_rgProfileData.steamid) {
+        return String(window.g_rgProfileData.steamid);
+    }
+    const scripts = document.getElementsByTagName("script");
+    for (let i = 0; i < scripts.length; i++) {
+        const content = scripts[i].textContent || "";
+        if (content.includes("g_rgProfileData")) {
+            const m = content.match(/"steamid"\s*:\s*"(\d{17})"/);
+            if (m) return m[1];
+        }
+    }
+    return null;
+}
+
+function isCommonFriendsTab() {
+    return window.location.pathname.toLowerCase().includes("/friends/common");
+}
+
+function isOwnFriendsPage() {
+    const pathname = window.location.pathname.toLowerCase();
+    if (pathname.startsWith("/my/friends")) {
+        return true;
+    }
+    if (document.getElementById("manage_friends_control") || 
+        document.getElementById("manage_friends") || 
+        document.querySelector(".manage_friends_btn")) {
+        return true;
+    }
+    const myId = getLoggedInSteamID();
+    const pageId = getPageProfileSteamID();
+    if (myId && pageId && myId === pageId) {
+        return true;
+    }
+    return false;
+}
+
+async function ensureMyFriendsLoaded() {
+    if (backgroundFetchDone) return;
+    if (isOwnFriendsPage()) return;
+
+    backgroundFetchDone = true;
+    try {
+        console.log("[Quick Friends] Fetching user's own friend list in background...");
+        const res = await fetch("https://steamcommunity.com/my/friends/", { credentials: "include" });
+        if (res.ok) {
+            const html = await res.text();
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(html, "text/html");
+            const friendNodes = doc.querySelectorAll("[data-steamid]");
+            let addedCount = 0;
+            friendNodes.forEach(node => {
+                const sid = node.getAttribute("data-steamid");
+                if (sid && /^\d{17}$/.test(sid)) {
+                    if (!myFriendsSet.has(sid)) {
+                        myFriendsSet.add(sid);
+                        addedCount++;
+                    }
+                }
+            });
+            console.log(`[Quick Friends] Loaded ${myFriendsSet.size} friends (${addedCount} newly added).`);
+            if (addedCount > 0) {
+                saveFriendsCache();
+            }
+            scanAndInject();
+        }
+    } catch (err) {
+        console.warn("[Quick Friends] Background fetch of my friends list failed:", err);
+    }
+}
+
+function harvestFriendsFromDOM() {
+    const cards = document.querySelectorAll(".friend_block_v2, .friendBlock, [data-steamid].selectable");
+    let newlyFound = 0;
+    cards.forEach(card => {
+        const sid = extractSteamIdFromCard(card);
+        if (sid && /^\d{17}$/.test(sid)) {
+            if (!myFriendsSet.has(sid)) {
+                myFriendsSet.add(sid);
+                newlyFound++;
+            }
+        }
+    });
+    if (newlyFound > 0) {
+        saveFriendsCache();
+    }
+}
+
 function openChatWithFriend(steamId) {
     console.log("[Quick Friends] Opening chat with SteamID:", steamId);
-    // Method 1: Trigger Steam client protocol
     window.location.href = `steam://friends/message/${steamId}`;
 
-    // Method 2: SteamClient JS API fallback
     try {
         if (window.SteamClient && window.SteamClient.Friends && window.SteamClient.Friends.OpenChatWindow) {
             window.SteamClient.Friends.OpenChatWindow(steamId);
@@ -350,7 +474,8 @@ async function performRemoveFriend(steamId, friendCard) {
 
         if (res.ok) {
             console.log("[Quick Friends] Friend removed successfully!");
-            // Animate card removal
+            myFriendsSet.delete(steamId);
+            saveFriendsCache();
             if (friendCard) {
                 friendCard.style.transition = "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)";
                 friendCard.style.opacity = "0";
@@ -361,11 +486,12 @@ async function performRemoveFriend(steamId, friendCard) {
             }
         } else {
             console.error("[Quick Friends] Server returned error status:", res.status);
-            // Fallback to backend Lua RPC if needed
             await __call_server_method__("remove_friend_native", {
                 sessionID: sessionID,
                 steamID: steamId
             });
+            myFriendsSet.delete(steamId);
+            saveFriendsCache();
             if (friendCard) {
                 friendCard.remove();
             }
@@ -419,12 +545,36 @@ function extractAvatarFromCard(card) {
 }
 
 function attachButtonsToCard(card) {
-    if (card.querySelector(".friend_quick_actions")) {
+    const steamId = extractSteamIdFromCard(card);
+    if (!steamId) {
         return;
     }
 
-    const steamId = extractSteamIdFromCard(card);
-    if (!steamId) {
+    // Never attach buttons to the logged-in user themselves
+    const myId = getLoggedInSteamID();
+    if (myId && String(steamId) === String(myId)) {
+        const existing = card.querySelector(".friend_quick_actions");
+        if (existing) existing.remove();
+        card.classList.remove("has_quick_actions");
+        return;
+    }
+
+    const isOwn = isOwnFriendsPage();
+    const isCommon = isCommonFriendsTab();
+    const isFriend = isOwn || isCommon || myFriendsSet.has(steamId);
+
+    // If this person is NOT the user's friend (e.g. stranger on someone else's friends page), do NOT show actions!
+    if (!isFriend) {
+        const existing = card.querySelector(".friend_quick_actions");
+        if (existing) existing.remove();
+        card.classList.remove("has_quick_actions");
+        return;
+    }
+
+    // Mark as having quick actions to apply right padding
+    card.classList.add("has_quick_actions");
+
+    if (card.querySelector(".friend_quick_actions")) {
         return;
     }
 
@@ -437,17 +587,15 @@ function attachButtonsToCard(card) {
     // Chat Icon SVG
     const chatSvg = `<svg viewBox="0 0 16 16"><path d="M14 1a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H4.414A2 2 0 0 0 3 11.586l-2 2V2a1 1 0 0 1 1-1h12zM2 0a2 2 0 0 0-2 2v12.793a.5.5 0 0 0 .854.353l2.853-2.853A1 1 0 0 1 4.414 12H14a2 2 0 0 0 2-2V2a2 2 0 0 0-2-2H2z"/></svg>`;
 
-    // Remove Icon SVG (Trash or Cross)
+    // Cross / Remove Icon SVG
     const removeSvg = `<svg viewBox="0 0 16 16"><path d="M4.646 4.646a.5.5 0 0 1 .708 0L8 7.293l2.646-2.647a.5.5 0 0 1 .708.708L8.707 8l2.647 2.646a.5.5 0 0 1-.708.708L8 8.707l-2.646 2.647a.5.5 0 0 1-.708-.708L7.293 8 4.646 5.354a.5.5 0 0 1 0-.708z"/></svg>`;
 
     actionContainer.innerHTML = `
-        <button class="friend_quick_btn friend_quick_btn_chat" title="Написать сообщение">
+        <button class="friend_quick_btn friend_quick_btn_chat" title="Написать сообщение (${friendName})">
             ${chatSvg}
-            <span>Чат</span>
         </button>
-        <button class="friend_quick_btn friend_quick_btn_remove" title="Удалить из друзей">
+        <button class="friend_quick_btn friend_quick_btn_remove" title="Удалить из друзей (${friendName})">
             ${removeSvg}
-            <span>Удалить</span>
         </button>
     `;
 
@@ -473,6 +621,9 @@ function attachButtonsToCard(card) {
 }
 
 function scanAndInject() {
+    if (isOwnFriendsPage() || isCommonFriendsTab()) {
+        harvestFriendsFromDOM();
+    }
     const cards = document.querySelectorAll(".friend_block_v2, .friendBlock, [data-steamid].selectable");
     for (let i = 0; i < cards.length; i++) {
         attachButtonsToCard(cards[i]);
@@ -500,10 +651,11 @@ let PluginEntryPointMain = function() {
 
             console.log("[Quick Friends Actions] Initializing on friends page:", window.location.href);
 
+            loadSavedFriends();
             injectStyles();
+            ensureMyFriendsLoaded();
             scanAndInject();
 
-            // Observe DOM mutations for search filter and tab switching
             const targetContainer = document.getElementById("friends_list") || document.body;
             const observer = new MutationObserver(() => {
                 requestScan();
@@ -511,7 +663,6 @@ let PluginEntryPointMain = function() {
 
             observer.observe(targetContainer, { childList: true, subtree: true });
 
-            // Periodic backup scan
             setInterval(requestScan, 1000);
         };
         Object.defineProperty(n, "__esModule", { value: !0 });
